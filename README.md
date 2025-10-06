@@ -1,50 +1,67 @@
-# NP
-Nachiket's Projects
-ERPNext Weighing Scale Client Script
-This client-side JavaScript script enables continuous, real-time reading of weight data from a serial-connected weighing scale directly into an ERPNext DocType form (e.g., "Weighing Scale").
-It utilizes the browser's Web Serial API—supported by Chrome and Edge—to communicate with scales connected via USB/COM ports.
+Weighbridge Weight Reader for ERPNext
+This project provides a JavaScript integration to read weight data from a serial weighbridge scale and display it in an ERPNext field (weighbridge_weight). It uses the Web Serial API to communicate with the scale COM port and continually updates the weight on the form.
 
 Features
-User-friendly COM Port Selection:
-Users can select and permanently save a serial port ("COM Port") for their weighing scale using a button. Port info is stored in browser localStorage, minimizing extra permission prompts.
+Automatically detects and stores selected COM port for future connections
 
-Live Weight Updates:
-Continuously reads serial data as long as the form is open and displays the latest weight value in the weight field of the ERPNext form without needing repeated button presses.
+Continuously reads weight packets from the serial scale
 
-Robust Data Parsing:
-Handles streaming data by buffering and extracting numeric weight values—compatible with most common scale output formats.
+Parses raw weight data encapsulated between STX (0x02) and ETX (0x03)
 
-Resource Management:
-Serial port and stream reader are safely closed and cleaned up when the form is closed or a new port is selected.
+Displays weight in the ERPNext form field weighbridge_weight
 
-Error Handling:
-Alerts users to failures in reading, parsing, or connecting to the scale for easier troubleshooting.
+Allows selecting a new COM port via a custom button in ERPNext form
 
-How to Use
-Paste the script into ERPNext’s Client Script for your “Weighing Scale” DocType.
+How it works
+COM Port Selection and Storage
+On form refresh, the script attempts to reopen the last used COM port saved in localStorage. If unavailable, it prompts the user to select a COM port and saves this info for subsequent sessions.
 
-Open the form in Chrome or Edge.
+Reading Serial Data
+The script reads serial data continuously from the scale. It expects the scale to send weight messages framed between STX ('\u0002') and ETX ('\u0003') characters, e.g., +017680013.
 
-Click "Select COM Port" to grant serial port access if not already set.
+Parsing Raw Weight Values
+Once a packet is received, the script extracts the signed numeric value. This raw number represents the weight with a certain scale factor applied by the weighbridge hardware.
 
-When the form opens, weight readings will appear automatically in the weight field—no need to click "Read Weight" each time.
+Scaling Raw Weight
+The raw number is converted to a human-readable weight by dividing by a scale divisor. This divisor depends on your specific weighbridge model and configuration.
 
-Close the form or reload to stop reading and release the port.
+Customizing Scale Division
+By default, the script divides the raw scale reading by 100 to convert it to the correct weight units. This value can be changed to suit your scale's output precision.
 
-Technical notes
-Script stores selected port info in localStorage and attempts reuse for seamless operation.
+Locate this line in the code:
 
-Designed for ERPNext v13+, with compatibility for v15.
+js
+const weight = sign * (rawNumber / 100);
+If your scale outputs weight in grams, divide by 1000 to convert to kilograms.
 
-Baud rate is set to 9600—adjust in code for different scale hardware.
+If your raw number is already in kilograms, use a divisor of 1 (i.e., no division).
 
-Reading/parsing is robust against partial/fragmented serial transmissions.
+Adjust the divisor as needed; common values are 1, 10, 100, or 1000.
 
-Requirements
-ERPNext DocType with a field named weight (type: Float/Data).
+For example, if your scale outputs 2304000 to represent 2304.000 kg, use:
 
-Chrome or Edge (Web Serial API support).
+js
+const weight = sign * (rawNumber / 1000);
+If it outputs 848000 for 8480.00 kg, use:
 
-User permission for serial port access.
+js
+const weight = sign * (rawNumber / 100);
+Setup and Usage
+Add the script to your ERPNext weighbridge form client script or custom app.
 
-This script enables seamless, live weight display from a physical scale into ERPNext, ideal for manufacturing, logistics, or inventory workflows requiring precise, real-time measurement logging.
+On loading the form, either reuses the saved COM port or prompts to select a COM port.
+
+The weight field updates live with values read from the scale.
+
+Use the "Select COM Port" button to change the port if needed.
+
+Close the form to properly release the port.
+
+Troubleshooting
+Ensure your browser supports the Web Serial API (e.g., Chrome).
+
+Verify the baud rate and serial settings match your weighbridge scale's configuration.
+
+Use the browser console log to view raw values for debugging (console.log("Raw number from scale:", rawNumber);).
+
+Adjust the division factor based on the raw values observed and expected real weight.
