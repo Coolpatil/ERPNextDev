@@ -1,0 +1,140 @@
+let scalePort = null;
+let scaleReader = null;
+let readingActive = false;
+
+function savePortInfo(port) {
+  const info = port.getInfo();
+  localStorage.setItem("selectedScalePort", JSON.stringify(info));
+}
+
+async function getStoredPort() {
+  const storedInfoStr = localStorage.getItem("selectedScalePort");
+  if (!storedInfoStr) return null;
+
+  const storedInfo = JSON.parse(storedInfoStr);
+  const ports = await navigator.serial.getPorts();
+
+  for (const port of ports) {
+    const info = port.getInfo();
+    let match = true;
+    if (storedInfo.usbVendorId && info.usbVendorId !== storedInfo.usbVendorId)
+      match = false;
+    if (
+      storedInfo.usbProductId &&
+      info.usbProductId !== storedInfo.usbProductId
+    )
+      match = false;
+    if (
+      storedInfo.serialNumber &&
+      info.serialNumber !== storedInfo.serialNumber
+    )
+      match = false;
+    if (match) return port;
+  }
+  return null;
+}
+
+async function openPort(port) {
+  if (!port.readable) {
+    await port.open({ baudRate: 9600 });
+  }
+}
+
+async function continuousReadWeight(frm) {
+  try {
+    if (!scalePort) {
+      scalePort = await getStoredPort();
+      if (!scalePort) {
+        scalePort = await navigator.serial.requestPort();
+        savePortInfo(scalePort);
+      }
+    }
+
+    await openPort(scalePort);
+
+    if (!scaleReader) {
+      const decoder = new TextDecoderStream();
+      scalePort.readable.pipeTo(decoder.writable);
+      scaleReader = decoder.readable.getReader();
+    }
+
+    readingActive = true;
+    let buffer = "";
+
+    while (readingActive) {
+      const { value, done } = await scaleReader.read();
+      if (done) break;
+      if (value) {
+        buffer += value;
+
+        while (buffer.includes('\u0002') && buffer.includes('\u0003')) {
+          const start = buffer.indexOf('\u0002');
+          const end = buffer.indexOf('\u0003', start);
+          if (end === -1) break;
+
+          const packet = buffer.substring(start + 1, end);
+          buffer = buffer.slice(end + 1);
+
+          let weightStr = packet.trim();
+          if (weightStr.startsWith('+') || weightStr.startsWith('-')) {
+            const sign = weightStr[0] === '-' ? -1 : 1;
+            const numPart = weightStr.slice(1);
+            const rawNumber = parseInt(numPart, 10);
+            if (!isNaN(rawNumber)) {
+              console.log("Raw number from scale:", rawNumber);
+              const weight = sign * (rawNumber / 100); // Dividing by 100 to scale value correctly
+              frm.set_value("weighbridge_weight", weight);
+              frm.refresh_field("weighbridge_weight");
+            }
+          }
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  } catch (error) {
+    console.error("Error during continuous read:", error);
+    frappe.msgprint("Error reading weight: " + error.message);
+  }
+}
+
+async function closeScalePort() {
+  readingActive = false;
+  if (scaleReader) {
+    try {
+      await scaleReader.cancel();
+    } catch {}
+    try {
+      scaleReader.releaseLock();
+    } catch {}
+    scaleReader = null;
+  }
+  if (scalePort) {
+    try {
+      await scalePort.close();
+    } catch {}
+    scalePort = null;
+    localStorage.removeItem("selectedScalePort");
+  }
+}
+
+frappe.ui.form.on("Weighbridge", {
+  refresh(frm) {
+    frm.add_custom_button("Select COM Port", async () => {
+      try {
+        await closeScalePort();
+        scalePort = await navigator.serial.requestPort();
+        savePortInfo(scalePort);
+        frappe.msgprint("COM Port selected and saved for future use.");
+        continuousReadWeight(frm);
+      } catch (error) {
+        frappe.msgprint("COM Port selection cancelled or failed.");
+      }
+    });
+
+    continuousReadWeight(frm);
+
+    frm.on("before_close", async () => {
+      await closeScalePort();
+    });
+  },
+});
